@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import pytesseract
 
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
 
 OUTPUT_COLUMNS = [
     "Comisionado",
