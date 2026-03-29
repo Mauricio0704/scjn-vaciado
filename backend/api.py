@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -16,32 +18,17 @@ from main import (
 
 app = FastAPI(title="SCJN Vaciado OCR API", version="1.0.0")
 
+_origins = ["http://localhost:4321", "http://localhost:3000"]
+_frontend_url = os.getenv("FRONTEND_URL")
+if _frontend_url:
+    _origins.append(_frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:4321",
-        "http://localhost:3000",
-    ],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-ALLOWED_ORIGINS_ENV = None
-
-
-@app.on_event("startup")
-def _configure_cors_from_env() -> None:
-    """Allow overriding CORS origins via FRONTEND_URL env var."""
-    import os
-
-    frontend_url = os.getenv("FRONTEND_URL")
-    if frontend_url:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=[frontend_url],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
 
 
 @app.get("/health")
