@@ -8,14 +8,6 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from main import (
-    IMAGE_EXTENSIONS,
-    build_dataframe,
-    dataframe_to_excel_bytes,
-    extract_images_from_zip,
-    process_image_bytes,
-)
-
 app = FastAPI(title="SCJN Vaciado OCR API", version="1.0.0")
 
 _origins = ["http://localhost:4321", "http://localhost:3000"]
@@ -39,6 +31,8 @@ def health_check():
 @app.post("/process")
 async def process_images(files: list[UploadFile] = File(...)):
     """Process uploaded images and/or zip files, return parsed JSON rows."""
+    from main import IMAGE_EXTENSIONS, extract_images_from_zip, process_image_bytes
+
     uploads: list[tuple[str, bytes]] = []
 
     for file in files:
@@ -72,6 +66,14 @@ async def process_images(files: list[UploadFile] = File(...)):
 @app.post("/process/excel")
 async def process_images_excel(files: list[UploadFile] = File(...)):
     """Process uploaded images and return an Excel file."""
+    from main import (
+        IMAGE_EXTENSIONS,
+        build_dataframe,
+        dataframe_to_excel_bytes,
+        extract_images_from_zip,
+        process_image_bytes,
+    )
+
     uploads: list[tuple[str, bytes]] = []
 
     for file in files:
