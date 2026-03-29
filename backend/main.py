@@ -1,4 +1,4 @@
-"""OCR pipeline: Imagen -> OpenCV -> Tesseract -> Parser -> Pandas -> Excel."""
+"""OCR pipeline: Imagen -> EasyOCR -> Parser -> Pandas -> Excel."""
 
 from __future__ import annotations
 
@@ -6,15 +6,12 @@ from io import BytesIO
 import re
 import unicodedata
 from pathlib import Path
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 from zipfile import ZipFile
 
 import cv2
 import numpy as np
 import pandas as pd
-import pytesseract
-
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
 
 OUTPUT_COLUMNS = [
@@ -33,6 +30,16 @@ OUTPUT_COLUMNS = [
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp"}
 DATAFRAME_COLUMNS = ["Archivo"] + OUTPUT_COLUMNS
 
+_ocr_reader = None
+
+
+def _get_ocr_reader():
+    global _ocr_reader
+    if _ocr_reader is None:
+        import easyocr
+        _ocr_reader = easyocr.Reader(["es", "en"], gpu=False)
+    return _ocr_reader
+
 
 def load_image_bytes(image_bytes: bytes, image_name: str):
     """Load an image from raw bytes."""
@@ -44,15 +51,12 @@ def load_image_bytes(image_bytes: bytes, image_name: str):
 
 
 def preprocess_image(image):
-    """Convert image to high-contrast black/white for OCR."""
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    denoised = cv2.bilateralFilter(gray_image, 9, 75, 75)
+    """Deskew image for OCR."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    denoised = cv2.bilateralFilter(gray, 9, 75, 75)
     kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-
     sharpened = cv2.filter2D(denoised, -1, kernel)
-    thresh = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[
-        1
-    ]
+    thresh = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     coords = np.column_stack(np.where(thresh > 0))
     angle = cv2.minAreaRect(coords)[-1]
 
@@ -61,20 +65,21 @@ def preprocess_image(image):
     else:
         angle = -angle
 
-    (h, w) = thresh.shape[:2]
+    (h, w) = gray.shape[:2]
     center = (w // 2, h // 2)
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
     deskewed = cv2.warpAffine(
-        thresh, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
+        gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
     )
 
     return deskewed
 
 
-def run_tesseract(image, lang: str = "spa") -> str:
-    """Extract OCR text in Spanish."""
-    config = "--oem 3 --psm 6"
-    return pytesseract.image_to_string(image, lang=lang, config=config)
+def run_ocr(image) -> str:
+    """Extract text using EasyOCR."""
+    reader = _get_ocr_reader()
+    results = reader.readtext(image, detail=0, paragraph=True)
+    return "\n".join(results)
 
 
 def _normalize_text(value: str) -> str:
@@ -136,12 +141,12 @@ def parse_ocr_text(text: str) -> Dict[str, str]:
 
 
 def process_image_bytes(
-    image_bytes: bytes, image_name: str, lang: str = "spa"
+    image_bytes: bytes, image_name: str, lang: str = "es"
 ) -> Dict[str, str]:
     """Process one uploaded image from raw bytes."""
     image = load_image_bytes(image_bytes, image_name)
-    bw_image = preprocess_image(image)
-    text = run_tesseract(bw_image, lang=lang)
+    preprocessed = preprocess_image(image)
+    text = run_ocr(preprocessed)
     parsed_record = parse_ocr_text(text)
     parsed_record["Archivo"] = image_name
     return parsed_record
