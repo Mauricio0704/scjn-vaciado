@@ -1,0 +1,505 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const API_URL = import.meta.env.PUBLIC_API_URL || "http://localhost:8000";
+---
+
+<Layout title="SCJN - Vaciado de Viaticos">
+  <main class="container">
+    <header class="header">
+      <h1>Vaciado de Viaticos</h1>
+      <p>
+        Sube imagenes o una carpeta comprimida (.zip). La aplicacion procesara
+        cada archivo y generara una tabla con los datos extraidos.
+      </p>
+    </header>
+
+    <section class="upload-section">
+      <div class="upload-area" id="dropZone">
+        <div class="upload-icon">
+          <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+          </svg>
+        </div>
+        <p class="upload-text">Arrastra archivos aqui o haz clic para seleccionar</p>
+        <p class="upload-hint">JPG, PNG, TIFF, BMP o ZIP</p>
+        <input
+          type="file"
+          id="fileInput"
+          multiple
+          accept=".jpg,.jpeg,.png,.tif,.tiff,.bmp,.zip"
+          hidden
+        />
+      </div>
+
+      <div id="fileList" class="file-list" hidden></div>
+
+      <div class="actions">
+        <button id="btnProcess" class="btn btn-primary" disabled>
+          Procesar imagenes
+        </button>
+        <button id="btnClear" class="btn btn-secondary" hidden>
+          Limpiar
+        </button>
+      </div>
+    </section>
+
+    <section id="progressSection" class="progress-section" hidden>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <p id="progressText" class="progress-text">Procesando...</p>
+    </section>
+
+    <section id="resultsSection" class="results-section" hidden>
+      <div class="results-header">
+        <h2>Resultados</h2>
+        <button id="btnDownload" class="btn btn-accent">Descargar Excel</button>
+      </div>
+      <div class="table-wrapper">
+        <table id="resultsTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="errorSection" class="error-section" hidden>
+      <p id="errorMessage"></p>
+    </section>
+  </main>
+</Layout>
+
+<script define:vars={{ API_URL }}>
+  const dropZone = document.getElementById("dropZone");
+  const fileInput = document.getElementById("fileInput");
+  const fileList = document.getElementById("fileList");
+  const btnProcess = document.getElementById("btnProcess");
+  const btnClear = document.getElementById("btnClear");
+  const btnDownload = document.getElementById("btnDownload");
+  const progressSection = document.getElementById("progressSection");
+  const progressBar = document.getElementById("progressBar");
+  const progressText = document.getElementById("progressText");
+  const resultsSection = document.getElementById("resultsSection");
+  const tableHead = document.getElementById("tableHead");
+  const tableBody = document.getElementById("tableBody");
+  const errorSection = document.getElementById("errorSection");
+  const errorMessage = document.getElementById("errorMessage");
+
+  let selectedFiles = [];
+  let lastRecords = null;
+
+  // --- Drop zone ---
+  dropZone.addEventListener("click", () => fileInput.click());
+
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("drag-over");
+  });
+
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    addFiles(e.dataTransfer.files);
+  });
+
+  fileInput.addEventListener("change", () => {
+    addFiles(fileInput.files);
+    fileInput.value = "";
+  });
+
+  function addFiles(fileListInput) {
+    for (const file of fileListInput) {
+      if (!selectedFiles.some((f) => f.name === file.name && f.size === file.size)) {
+        selectedFiles.push(file);
+      }
+    }
+    renderFileList();
+  }
+
+  function renderFileList() {
+    if (selectedFiles.length === 0) {
+      fileList.hidden = true;
+      btnProcess.disabled = true;
+      btnClear.hidden = true;
+      return;
+    }
+
+    fileList.hidden = false;
+    btnProcess.disabled = false;
+    btnClear.hidden = false;
+
+    fileList.innerHTML = selectedFiles
+      .map(
+        (f, i) => `
+      <div class="file-item">
+        <span class="file-name">${f.name}</span>
+        <span class="file-size">${(f.size / 1024).toFixed(1)} KB</span>
+        <button class="file-remove" data-index="${i}" title="Quitar">&times;</button>
+      </div>`
+      )
+      .join("");
+
+    fileList.querySelectorAll(".file-remove").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedFiles.splice(Number(btn.dataset.index), 1);
+        renderFileList();
+      });
+    });
+  }
+
+  btnClear.addEventListener("click", () => {
+    selectedFiles = [];
+    lastRecords = null;
+    renderFileList();
+    resultsSection.hidden = true;
+    errorSection.hidden = true;
+    progressSection.hidden = true;
+  });
+
+  // --- Process ---
+  btnProcess.addEventListener("click", async () => {
+    if (selectedFiles.length === 0) return;
+
+    errorSection.hidden = true;
+    resultsSection.hidden = true;
+    progressSection.hidden = false;
+    progressBar.style.width = "0%";
+    progressText.textContent = "Enviando archivos al servidor...";
+    btnProcess.disabled = true;
+
+    const formData = new FormData();
+    selectedFiles.forEach((f) => formData.append("files", f));
+
+    try {
+      progressBar.style.width = "30%";
+      progressText.textContent = "Procesando OCR...";
+
+      const response = await fetch(`${API_URL}/process`, {
+        method: "POST",
+        body: formData,
+      });
+
+      progressBar.style.width = "90%";
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.detail || `Error del servidor: ${response.status}`);
+      }
+
+      const data = await response.json();
+      lastRecords = data.records;
+
+      progressBar.style.width = "100%";
+      progressText.textContent = `Procesadas ${data.total} imagen(es)`;
+
+      renderResults(data.records);
+      resultsSection.hidden = false;
+    } catch (err) {
+      errorMessage.textContent = `Error: ${err.message}`;
+      errorSection.hidden = false;
+    } finally {
+      btnProcess.disabled = false;
+      setTimeout(() => {
+        progressSection.hidden = true;
+      }, 1500);
+    }
+  });
+
+  // --- Download Excel ---
+  btnDownload.addEventListener("click", async () => {
+    if (selectedFiles.length === 0) return;
+
+    btnDownload.disabled = true;
+    btnDownload.textContent = "Generando...";
+
+    const formData = new FormData();
+    selectedFiles.forEach((f) => formData.append("files", f));
+
+    try {
+      const response = await fetch(`${API_URL}/process/excel`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.detail || `Error del servidor: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "output.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      errorMessage.textContent = `Error al descargar: ${err.message}`;
+      errorSection.hidden = false;
+    } finally {
+      btnDownload.disabled = false;
+      btnDownload.textContent = "Descargar Excel";
+    }
+  });
+
+  // --- Render table ---
+  function renderResults(records) {
+    if (!records || records.length === 0) {
+      tableHead.innerHTML = "";
+      tableBody.innerHTML = '<tr><td colspan="100%">Sin resultados</td></tr>';
+      return;
+    }
+
+    const columns = [
+      "Archivo",
+      "Comisionado",
+      "Area u Organo Jurisdiccional",
+      "Dias que comprende la comision",
+      "Localidad",
+      "Hospedaje $",
+      "Alimentacion $",
+      "Combustible / Pasajes $",
+      "Recorrido Int. / Taxis $",
+      "Peaje $",
+      "Total $",
+    ];
+
+    tableHead.innerHTML = `<tr>${columns.map((c) => `<th>${c}</th>`).join("")}</tr>`;
+    tableBody.innerHTML = records
+      .map(
+        (r) =>
+          `<tr>${columns
+            .map((c) => `<td>${r[c] || r.error || ""}</td>`)
+            .join("")}</tr>`
+      )
+      .join("");
+  }
+</script>
+
+<style>
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .header h1 {
+    font-size: 1.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .header p {
+    color: var(--color-text-muted);
+    max-width: 520px;
+    margin: 0 auto;
+  }
+
+  /* Upload area */
+  .upload-area {
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius);
+    padding: 2.5rem 1rem;
+    text-align: center;
+    background: var(--color-surface);
+    transition: border-color 0.2s, background 0.2s;
+    cursor: pointer;
+  }
+
+  .upload-area:hover,
+  .upload-area.drag-over {
+    border-color: var(--color-accent);
+    background: #fef2f4;
+  }
+
+  .upload-icon {
+    color: var(--color-text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .upload-text {
+    font-weight: 500;
+  }
+
+  .upload-hint {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+  }
+
+  /* File list */
+  .file-list {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--color-surface);
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    font-size: 0.9rem;
+  }
+
+  .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-size {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .file-remove {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    color: var(--color-text-muted);
+    line-height: 1;
+    padding: 0 0.25rem;
+  }
+
+  .file-remove:hover {
+    color: var(--color-error);
+  }
+
+  /* Actions */
+  .actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+
+  .btn {
+    padding: 0.6rem 1.5rem;
+    border-radius: var(--radius);
+    font-weight: 600;
+    font-size: 0.95rem;
+    border: none;
+    transition: opacity 0.2s;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-primary);
+    color: #fff;
+  }
+
+  .btn-secondary {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
+
+  .btn-accent {
+    background: var(--color-accent);
+    color: #fff;
+  }
+
+  /* Progress */
+  .progress-section {
+    margin-top: 1.5rem;
+  }
+
+  .progress-bar-container {
+    background: var(--color-border);
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--color-accent);
+    border-radius: 999px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+
+  .progress-text {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  /* Results */
+  .results-section {
+    margin-top: 2rem;
+  }
+
+  .results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .results-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+    background: var(--color-surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  th,
+  td {
+    padding: 0.6rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+
+  th {
+    background: var(--color-primary);
+    color: #fff;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+  }
+
+  tr:hover td {
+    background: #f9fafb;
+  }
+
+  /* Error */
+  .error-section {
+    margin-top: 1.5rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: var(--color-error);
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+  }
+</style>
