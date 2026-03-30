@@ -17,6 +17,7 @@ import pandas as pd
 
 OUTPUT_COLUMNS = [
     "Comisionado",
+    "Fecha",
     "Area u Organo Jurisdiccional",
     "Dias que comprende la comision",
     "Localidad",
@@ -117,10 +118,10 @@ def _extract_line_value(lines: List[str], patterns: List[str]) -> str:
 def _extract_table_amounts(lines: List[str]) -> Dict[str, str]:
     """Extract the five per-diem amounts from the table header + value rows.
 
-    The document lays out column headers on one line and the corresponding
-    numeric values on the next.  We detect the header row by requiring at
-    least two column-keyword matches, then map each header's left-to-right
-    position to the corresponding amount on the following value row.
+    Hospedaje and Alimentación use the format "$ X × N = Y"; the relevant
+    value is Y (the total), which appears in a later row than the daily rate X.
+    We scan all value rows after the header and let each row overwrite the
+    previous one per column — so the last amount at each column position wins.
     """
     for i, line in enumerate(lines):
         normalized = _normalize_text(line)
@@ -133,13 +134,23 @@ def _extract_table_amounts(lines: List[str]) -> Dict[str, str]:
         if len(col_positions) < 2:
             continue
 
-        # Find the first subsequent line that has at least as many amounts
-        # as columns detected in the header row.
-        for j in range(i + 1, min(i + 4, len(lines))):
+        col_positions.sort()
+        result: Dict[str, str] = {name: "" for _, name in col_positions}
+
+        # Scan subsequent rows until "Total" or a non-amount line streak.
+        for j in range(i + 1, len(lines)):
+            if re.search(r"\btotal\b", _normalize_text(lines[j])):
+                break
             amounts = _AMOUNT_RE.findall(lines[j])
-            if len(amounts) >= len(col_positions):
-                col_positions.sort()
-                return {name: amounts[k] for k, (_, name) in enumerate(col_positions)}
+            if not amounts:
+                continue
+            # Overwrite column values left-to-right; later rows (totals) win.
+            for k, (_, name) in enumerate(col_positions):
+                if k < len(amounts):
+                    result[name] = amounts[k]
+
+        if any(result.values()):
+            return result
 
     return {}
 
@@ -167,6 +178,7 @@ def parse_ocr_text(text: str) -> Dict[str, str]:
 
     return {
         "Comisionado": _extract_line_value(lines, [r"com[il1]s[il1]onado"]),
+        "Fecha": _extract_line_value(lines, [r"f.{0,2}cha"]),
         "Area u Organo Jurisdiccional": _extract_line_value(
             lines, [r"area u.{0,5}rgano.{0,15}ur[il1]sd[il1]cc[il1]onal"]
         ),
