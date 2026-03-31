@@ -4,11 +4,24 @@ from __future__ import annotations
 
 from io import BytesIO
 import re
+import sys
 import unicodedata
 import warnings
 from pathlib import Path
+from types import ModuleType
 from typing import Dict, List, Sequence, Tuple
 from zipfile import ZipFile
+
+# EasyOCR uses python-bidi only for RTL scripts (Arabic/Hebrew).
+# Spanish documents are LTR, so inject a no-op stub to avoid broken
+# python-bidi builds on Python 3.14.
+_bidi_alg = ModuleType("bidi.algorithm")
+_bidi_alg.get_display = lambda text, *a, **kw: text  # type: ignore[attr-defined]
+_bidi = ModuleType("bidi")
+_bidi.algorithm = _bidi_alg  # type: ignore[attr-defined]
+_bidi.get_display = lambda text, *a, **kw: text  # type: ignore[attr-defined]
+sys.modules.setdefault("bidi", _bidi)
+sys.modules.setdefault("bidi.algorithm", _bidi_alg)
 
 import cv2
 import numpy as np
