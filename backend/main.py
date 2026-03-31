@@ -79,6 +79,23 @@ def _normalize_text(value: str) -> str:
     return compact
 
 
+# Patterns that signal the start of a new field label — used to truncate
+# values when OCR merges several fields into one paragraph/line.
+_FIELD_STOP_RE = re.compile(
+    r"\b(?:f[a-z]{0,2}cha|area|organo|dias que comprende|localidad|hospedaje|al[il1]mentac"
+    r"|combust[il1]ble|pasajes|recorr[il1]do|tax[il1]s|peaje|total|com[il1]s[il1]onado)\b"
+)
+
+
+def _truncate_at_next_label(value: str) -> str:
+    """Cut a field value off at the first word that looks like another label."""
+    normalized = _normalize_text(value)
+    m = _FIELD_STOP_RE.search(normalized)
+    if m and m.start() > 0:
+        return value[: m.start()].strip(" :-\t,")
+    return value
+
+
 _AMOUNT_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d{2})|\d+(?:\.\d{2})")
 
 # Ordered list of (output_key, regex_pattern) for the five amount columns.
@@ -176,16 +193,26 @@ def parse_ocr_text(text: str) -> Dict[str, str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     table = _extract_table_amounts(lines)
 
-    return {
-        "Comisionado": _extract_line_value(lines, [r"com[il1]s[il1]onado"]),
-        "Fecha": _extract_line_value(lines, [r"f.{0,2}cha"]),
-        "Area u Organo Jurisdiccional": _extract_line_value(
-            lines, [r"area u.{0,5}rgano.{0,15}ur[il1]sd[il1]cc[il1]onal"]
+    result = {
+        "Comisionado": _truncate_at_next_label(
+            _extract_line_value(lines, [r"com[il1]s[il1]onado"])
         ),
-        "Dias que comprende la comision": _extract_line_value(
-            lines, [r"d[il1]as que comprende la com[il1]s[il1]on"]
+        "Fecha": _truncate_at_next_label(
+            _extract_line_value(lines, [r"f.{0,2}cha"])
         ),
-        "Localidad": _extract_line_value(lines, [r"local[il1]dad"]),
+        "Area u Organo Jurisdiccional": _truncate_at_next_label(
+            _extract_line_value(
+                lines, [r"area.{0,10}rgano.{0,15}ur[il1]sd[il1]cc[il1]onal"]
+            )
+        ),
+        "Dias que comprende la comision": _truncate_at_next_label(
+            _extract_line_value(
+                lines, [r"d[il1]as que comprende la com[il1]s[il1]on"]
+            )
+        ),
+        "Localidad": _truncate_at_next_label(
+            _extract_line_value(lines, [r"local[il1]dad"])
+        ),
         "Hospedaje": table.get("Hospedaje", ""),
         "Alimentacion": table.get("Alimentacion", ""),
         "Combustible / Pasajes": table.get("Combustible / Pasajes", ""),
@@ -193,6 +220,7 @@ def parse_ocr_text(text: str) -> Dict[str, str]:
         "Peaje": table.get("Peaje", ""),
         "Total": _extract_last_amount(lines, [r"total"]),
     }
+    return {k: v.upper() for k, v in result.items()}
 
 
 def process_image_bytes(
